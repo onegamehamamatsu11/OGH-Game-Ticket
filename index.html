@@ -164,17 +164,25 @@
     const CHECK_URL =
       "https://oranxqywopnabesvwmys.supabase.co/functions/v1/check-game-ticket";
 
+    // ゲームIDと表示名
     const gameNames = {
-      "button-mashing-game": "ボタン連打ゲーム",
-      "udon-catch": "うどんキャッチ",
-      "tono-adventure": "トノの大冒険",
-      "kendama-breakout": "けん玉崩し",
+      "bomb-dodging": "爆弾避け",
       "endless-jump": "エンドレスジャンプ",
-      "reaction-game": "反射神経ゲーム"
+      "reaction-game": "反射神経ゲーム",
+      "button-mashing-game": "ボタン連打ゲーム"
     };
 
-    // 各ゲームの公開URL
+    // ゲームIDと公開URL
     const gameUrls = {
+      "bomb-dodging":
+        "https://onegamehamamatsu11.github.io/Bomb-Dodging/",
+
+      "endless-jump":
+        "https://onegamehamamatsu11.github.io/Endless-Jump/",
+
+      "reaction-game":
+        "https://onegamehamamatsu11.github.io/ReflexesGame/",
+
       "button-mashing-game":
         "https://onegamehamamatsu11.github.io/Button-Mashing/"
     };
@@ -193,9 +201,10 @@
     const remainingText = document.getElementById("remainingText");
 
     let currentGameId = "";
+    let currentToken = "";
     let resumeUntil = null;
     let countdownTimer = null;
-    let currentToken = "";
+    let verificationSequence = 0;
 
     function showStatus(message, type = "", detail = "") {
       statusEl.textContent = message;
@@ -214,6 +223,7 @@
       stopCountdown();
       resumeUntil = null;
       currentGameId = "";
+      currentToken = "";
       approvedEl.classList.add("hidden");
 
       showStatus(
@@ -285,14 +295,35 @@
       }
     }
 
+    async function requestVerification(token) {
+      const response = await fetch(CHECK_URL, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        cache: "no-store",
+        body: JSON.stringify({ token })
+      });
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          result.error || "通信エラーが発生しました。"
+        );
+      }
+
+      return result;
+    }
+
     async function verifyToken(token) {
+      const sequence = ++verificationSequence;
       const normalized = token.trim().toLowerCase();
 
       stopCountdown();
       resumeUntil = null;
       currentGameId = "";
       currentToken = "";
-
       approvedEl.classList.add("hidden");
 
       if (!/^[a-f0-9]{64}$/.test(normalized)) {
@@ -308,24 +339,9 @@
       showStatus("QRコードを確認しています...");
 
       try {
-        const response = await fetch(CHECK_URL, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json"
-          },
-          cache: "no-store",
-          body: JSON.stringify({
-            token: normalized
-          })
-        });
+        const result = await requestVerification(normalized);
 
-        const result = await response.json();
-
-        if (!response.ok) {
-          throw new Error(
-            result.error || "通信エラーが発生しました。"
-          );
-        }
+        if (sequence !== verificationSequence) return;
 
         if (!result.valid || !result.allowed) {
           showStatus(
@@ -340,14 +356,20 @@
           throw new Error("認証結果が不完全です。");
         }
 
+        if (!gameUrls[result.game_id]) {
+          showStatus(
+            "ゲーム未登録",
+            "error",
+            "このQRコードに対応するゲームは現在登録されていません。"
+          );
+          return;
+        }
+
         currentGameId = result.game_id;
         currentToken = normalized;
 
-        const gameName =
-          gameNames[currentGameId] || "登録済みゲーム";
-
         gameNameEl.textContent =
-          "対象ゲーム：" + gameName;
+          "対象ゲーム：" + gameNames[currentGameId];
 
         manualEl.classList.add("hidden");
         approvedEl.classList.remove("hidden");
@@ -361,15 +383,19 @@
         startCountdown(result.resume_until);
 
       } catch (error) {
+        if (sequence !== verificationSequence) return;
+
         console.error("認証エラー:", error);
 
         showStatus(
-          "通信エラー",
+          "認証エラー",
           "error",
-          "認証サーバーに接続できませんでした。"
+          error.message || "認証処理に失敗しました。"
         );
       } finally {
-        checkButton.disabled = false;
+        if (sequence === verificationSequence) {
+          checkButton.disabled = false;
+        }
       }
     }
 
@@ -404,41 +430,31 @@
       showStatus("利用期限を確認しています...");
 
       try {
-        // ゲームを開く直前にもサーバーで期限を確認
-        const response = await fetch(CHECK_URL, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json"
-          },
-          cache: "no-store",
-          body: JSON.stringify({ token })
-        });
-
-        const result = await response.json();
-
-        if (!response.ok) {
-          throw new Error("認証サーバーに接続できません。");
-        }
+        const result = await requestVerification(token);
 
         if (
           !result.valid ||
           !result.allowed ||
-          result.game_id !== gameId
+          result.game_id !== gameId ||
+          !result.resume_until
         ) {
           expireSession();
           return;
         }
+
+        const serverUntil = new Date(
+          result.resume_until
+        );
 
         if (
-          !result.resume_until ||
-          Date.now() >=
-            new Date(result.resume_until).getTime()
+          Number.isNaN(serverUntil.getTime()) ||
+          Date.now() >= serverUntil.getTime()
         ) {
           expireSession();
           return;
         }
 
-        // 認証成功後にゲームへ移動
+        // 認証成功後、対象のゲームを開く
         window.location.href = url;
 
       } catch (error) {
