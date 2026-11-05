@@ -6,8 +6,10 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#10182b">
   <title>ONEGAME浜松 | QRゲーム認証</title>
+
   <style>
     * { box-sizing: border-box; }
+
     body {
       margin: 0;
       min-height: 100vh;
@@ -19,6 +21,7 @@
       font-family: system-ui, sans-serif;
       text-align: center;
     }
+
     main {
       width: 100%;
       max-width: 440px;
@@ -27,13 +30,20 @@
       border: 1px solid #425779;
       border-radius: 22px;
     }
+
     h1 { font-size: 28px; margin: 0 0 8px; }
     h2 { font-size: 20px; margin: 0 0 24px; }
     p { line-height: 1.8; }
-    .status { font-size: 18px; font-weight: 700; }
+
+    .status {
+      font-size: 18px;
+      font-weight: 700;
+    }
+
     .success { color: #7df0b5; }
     .error { color: #ffaaa9; }
     .muted { color: #c7d4ea; font-size: 14px; }
+
     button {
       border: 0;
       border-radius: 12px;
@@ -46,7 +56,12 @@
       width: 100%;
       margin-top: 16px;
     }
-    button:disabled { opacity: .5; cursor: not-allowed; }
+
+    button:disabled {
+      opacity: .5;
+      cursor: not-allowed;
+    }
+
     input {
       width: 100%;
       padding: 14px;
@@ -56,9 +71,19 @@
       color: #fff;
       font-size: 16px;
     }
+
     .hidden { display: none; }
+
+    .timebox {
+      margin-top: 16px;
+      padding: 14px;
+      border: 1px solid #617696;
+      border-radius: 12px;
+      background: #17243c;
+    }
   </style>
 </head>
+
 <body>
   <main>
     <h1>ONEGAME浜松</h1>
@@ -69,23 +94,30 @@
 
     <div id="manual" class="hidden">
       <p>QRコードに記載された専用コードを入力してください。</p>
-      <input id="tokenInput"
+      <input
+        id="tokenInput"
         type="text"
         placeholder="64文字の専用コード"
         maxlength="64"
         autocomplete="off"
-        spellcheck="false">
+        spellcheck="false"
+      >
       <button id="checkButton" type="button">認証する</button>
     </div>
 
     <div id="approved" class="hidden">
       <p id="gameName"></p>
-      <button id="startButton" type="button" disabled>
-        ゲーム開始（準備中）
+
+      <div id="timeBox" class="timebox hidden">
+        <p id="timeText"></p>
+      </div>
+
+      <button id="startButton" type="button">
+        ゲーム開始
       </button>
+
       <p class="muted">
-        現在は認証テスト段階です。
-        ゲームの起動機能はまだ利用できません。
+        初回開始から60分間、何度でもプレイできます。
       </p>
     </div>
   </main>
@@ -93,8 +125,11 @@
   <script>
     "use strict";
 
-    const FUNCTION_URL =
+    const CHECK_URL =
       "https://oranxqywopnabesvwmys.supabase.co/functions/v1/check-game-ticket";
+
+    const START_URL =
+      "https://oranxqywopnabesvwmys.supabase.co/functions/v1/start-game-ticket";
 
     const gameNames = {
       "button-mashing-game": "ボタン連打ゲーム",
@@ -105,18 +140,48 @@
       "reaction-game": "反射神経ゲーム"
     };
 
+    const gameUrls = {
+      // 本番ゲームのURLは次の工程で登録します
+    };
+
     const statusEl = document.getElementById("status");
     const detailEl = document.getElementById("detail");
     const manualEl = document.getElementById("manual");
     const approvedEl = document.getElementById("approved");
     const tokenInput = document.getElementById("tokenInput");
     const checkButton = document.getElementById("checkButton");
+    const startButton = document.getElementById("startButton");
     const gameNameEl = document.getElementById("gameName");
+    const timeBox = document.getElementById("timeBox");
+    const timeText = document.getElementById("timeText");
+
+    let currentToken = "";
+    let currentGameId = "";
 
     function showStatus(message, type = "", detail = "") {
       statusEl.textContent = message;
       statusEl.className = "status " + type;
       detailEl.textContent = detail;
+    }
+
+    async function callFunction(url, token) {
+      const response = await fetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ token })
+      });
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          result.error || "通信エラーが発生しました。"
+        );
+      }
+
+      return result;
     }
 
     async function verifyToken(token) {
@@ -125,8 +190,11 @@
       approvedEl.classList.add("hidden");
 
       if (!/^[a-f0-9]{64}$/.test(normalized)) {
-        showStatus("認証できません", "error",
-          "専用コードは64文字の英数字で入力してください。");
+        showStatus(
+          "認証できません",
+          "error",
+          "専用コードは64文字の英数字で入力してください。"
+        );
         return;
       }
 
@@ -134,43 +202,108 @@
       showStatus("QRコードを確認しています...");
 
       try {
-        const response = await fetch(FUNCTION_URL, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json"
-          },
-          body: JSON.stringify({ token: normalized })
-        });
-
-        const result = await response.json();
-
-        if (!response.ok) {
-          throw new Error(result.error || "通信エラーが発生しました。");
-        }
+        const result = await callFunction(
+          CHECK_URL,
+          normalized
+        );
 
         if (!result.valid) {
-          showStatus("認証できません", "error",
-            result.message || "このQRコードは使用できません。");
+          showStatus(
+            "認証できません",
+            "error",
+            result.message || "このQRコードは使用できません。"
+          );
           return;
         }
 
-        const name = gameNames[result.game_id] ||
+        currentToken = normalized;
+        currentGameId = result.game_id;
+
+        const name = gameNames[currentGameId] ||
           "登録済みゲーム";
 
         gameNameEl.textContent = "対象ゲーム：" + name;
 
-        showStatus("認証成功！", "success",
-          result.message || "ゲームを開始できます。");
+        showStatus(
+          "認証成功！",
+          "success",
+          result.message || "ゲームを開始できます。"
+        );
 
         manualEl.classList.add("hidden");
         approvedEl.classList.remove("hidden");
 
       } catch (error) {
         console.error("認証エラー:", error);
-        showStatus("通信エラー", "error",
-          "認証サーバーに接続できませんでした。");
+
+        showStatus(
+          "通信エラー",
+          "error",
+          "認証サーバーに接続できませんでした。"
+        );
       } finally {
         checkButton.disabled = false;
+      }
+    }
+
+    async function startGame() {
+      if (!currentToken) return;
+
+      startButton.disabled = true;
+      showStatus("ゲームを準備しています...");
+
+      try {
+        const result = await callFunction(
+          START_URL,
+          currentToken
+        );
+
+        if (!result.allowed) {
+          approvedEl.classList.add("hidden");
+
+          showStatus(
+            "ゲームを開始できません",
+            "error",
+            result.message || "利用期限が終了しました。"
+          );
+          return;
+        }
+
+        const until = new Date(result.resume_until);
+
+        timeBox.classList.remove("hidden");
+
+        timeText.textContent =
+          "利用期限：" +
+          until.toLocaleString("ja-JP", {
+            timeZone: "Asia/Tokyo"
+          });
+
+        showStatus(
+          "ゲーム開始OK！",
+          "success",
+          result.message || "ゲームを開始できます。"
+        );
+
+        const url = gameUrls[result.game_id];
+
+        if (url) {
+          window.location.href = url;
+        } else {
+          detailEl.textContent =
+            "認証成功。ゲームURLはまだ登録されていません。";
+        }
+
+      } catch (error) {
+        console.error("ゲーム開始エラー:", error);
+
+        showStatus(
+          "通信エラー",
+          "error",
+          "ゲーム開始処理に失敗しました。"
+        );
+      } finally {
+        startButton.disabled = false;
       }
     }
 
@@ -184,6 +317,8 @@
       }
     });
 
+    startButton.addEventListener("click", startGame);
+
     const params = new URLSearchParams(location.search);
     const urlToken = params.get("token");
 
@@ -191,8 +326,11 @@
       manualEl.classList.add("hidden");
       verifyToken(urlToken);
     } else {
-      showStatus("QRコード認証", "",
-        "専用コードを入力して認証を確認できます。");
+      showStatus(
+        "QRコード認証",
+        "",
+        "専用コードを入力して認証を確認できます。"
+      );
       manualEl.classList.remove("hidden");
     }
   </script>
