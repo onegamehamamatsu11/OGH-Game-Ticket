@@ -3,40 +3,198 @@
 <html lang="ja">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>ONEGAME浜松 | ゲーム認証</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#10182b">
+  <title>ONEGAME浜松 | QRゲーム認証</title>
   <style>
     * { box-sizing: border-box; }
     body {
       margin: 0;
       min-height: 100vh;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      background: #10182b;
-      color: white;
-      font-family: sans-serif;
-      text-align: center;
+      display: grid;
+      place-items: center;
       padding: 20px;
+      background: linear-gradient(160deg, #10182b, #243b65);
+      color: #fff;
+      font-family: system-ui, sans-serif;
+      text-align: center;
     }
-    .panel {
+    main {
       width: 100%;
-      max-width: 420px;
-      padding: 36px 22px;
+      max-width: 440px;
+      padding: 32px 22px;
       background: #202e4a;
-      border-radius: 20px;
+      border: 1px solid #425779;
+      border-radius: 22px;
     }
-    h1 { font-size: 26px; }
+    h1 { font-size: 28px; margin: 0 0 8px; }
+    h2 { font-size: 20px; margin: 0 0 24px; }
     p { line-height: 1.8; }
-    .status { color: #75e7b4; font-weight: bold; }
+    .status { font-size: 18px; font-weight: 700; }
+    .success { color: #7df0b5; }
+    .error { color: #ffaaa9; }
+    .muted { color: #c7d4ea; font-size: 14px; }
+    button {
+      border: 0;
+      border-radius: 12px;
+      background: #7df0b5;
+      color: #102139;
+      font-size: 17px;
+      font-weight: bold;
+      padding: 14px 24px;
+      cursor: pointer;
+      width: 100%;
+      margin-top: 16px;
+    }
+    button:disabled { opacity: .5; cursor: not-allowed; }
+    input {
+      width: 100%;
+      padding: 14px;
+      border-radius: 10px;
+      border: 1px solid #8193b2;
+      background: #10182b;
+      color: #fff;
+      font-size: 16px;
+    }
+    .hidden { display: none; }
   </style>
 </head>
 <body>
-  <main class="panel">
+  <main>
     <h1>ONEGAME浜松</h1>
-    <h2>ゲーム認証システム</h2>
-    <p class="status">公開ページの準備ができました！</p>
-    <p>QRコード認証機能は現在準備中です。</p>
+    <h2>QRゲーム認証</h2>
+
+    <p id="status" class="status">認証の準備をしています...</p>
+    <p id="detail" class="muted"></p>
+
+    <div id="manual" class="hidden">
+      <p>QRコードに記載された専用コードを入力してください。</p>
+      <input id="tokenInput"
+        type="text"
+        placeholder="64文字の専用コード"
+        maxlength="64"
+        autocomplete="off"
+        spellcheck="false">
+      <button id="checkButton" type="button">認証する</button>
+    </div>
+
+    <div id="approved" class="hidden">
+      <p id="gameName"></p>
+      <button id="startButton" type="button" disabled>
+        ゲーム開始（準備中）
+      </button>
+      <p class="muted">
+        現在は認証テスト段階です。
+        ゲームの起動機能はまだ利用できません。
+      </p>
+    </div>
   </main>
+
+  <script>
+    "use strict";
+
+    const FUNCTION_URL =
+      "https://oranxqywopnabesvwmys.supabase.co/functions/v1/check-game-ticket";
+
+    const gameNames = {
+      "button-mashing-game": "ボタン連打ゲーム",
+      "udon-catch": "うどんキャッチ",
+      "tono-adventure": "トノの大冒険",
+      "kendama-breakout": "けん玉崩し",
+      "endless-jump": "エンドレスジャンプ",
+      "reaction-game": "反射神経ゲーム"
+    };
+
+    const statusEl = document.getElementById("status");
+    const detailEl = document.getElementById("detail");
+    const manualEl = document.getElementById("manual");
+    const approvedEl = document.getElementById("approved");
+    const tokenInput = document.getElementById("tokenInput");
+    const checkButton = document.getElementById("checkButton");
+    const gameNameEl = document.getElementById("gameName");
+
+    function showStatus(message, type = "", detail = "") {
+      statusEl.textContent = message;
+      statusEl.className = "status " + type;
+      detailEl.textContent = detail;
+    }
+
+    async function verifyToken(token) {
+      const normalized = token.trim().toLowerCase();
+
+      approvedEl.classList.add("hidden");
+
+      if (!/^[a-f0-9]{64}$/.test(normalized)) {
+        showStatus("認証できません", "error",
+          "専用コードは64文字の英数字で入力してください。");
+        return;
+      }
+
+      checkButton.disabled = true;
+      showStatus("QRコードを確認しています...");
+
+      try {
+        const response = await fetch(FUNCTION_URL, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({ token: normalized })
+        });
+
+        const result = await response.json();
+
+        if (!response.ok) {
+          throw new Error(result.error || "通信エラーが発生しました。");
+        }
+
+        if (!result.valid) {
+          showStatus("認証できません", "error",
+            result.message || "このQRコードは使用できません。");
+          return;
+        }
+
+        const name = gameNames[result.game_id] ||
+          "登録済みゲーム";
+
+        gameNameEl.textContent = "対象ゲーム：" + name;
+
+        showStatus("認証成功！", "success",
+          result.message || "ゲームを開始できます。");
+
+        manualEl.classList.add("hidden");
+        approvedEl.classList.remove("hidden");
+
+      } catch (error) {
+        console.error("認証エラー:", error);
+        showStatus("通信エラー", "error",
+          "認証サーバーに接続できませんでした。");
+      } finally {
+        checkButton.disabled = false;
+      }
+    }
+
+    checkButton.addEventListener("click", () => {
+      verifyToken(tokenInput.value);
+    });
+
+    tokenInput.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        verifyToken(tokenInput.value);
+      }
+    });
+
+    const params = new URLSearchParams(location.search);
+    const urlToken = params.get("token");
+
+    if (urlToken) {
+      manualEl.classList.add("hidden");
+      verifyToken(urlToken);
+    } else {
+      showStatus("QRコード認証", "",
+        "専用コードを入力して認証を確認できます。");
+      manualEl.classList.remove("hidden");
+    }
+  </script>
 </body>
 </html>
