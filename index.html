@@ -8,7 +8,9 @@
   <title>ONEGAME浜松 | QRゲーム認証</title>
 
   <style>
-    * { box-sizing: border-box; }
+    * {
+      box-sizing: border-box;
+    }
 
     body {
       margin: 0;
@@ -17,7 +19,7 @@
       place-items: center;
       padding: 20px;
       background: linear-gradient(160deg, #10182b, #243b65);
-      color: #fff;
+      color: #ffffff;
       font-family: system-ui, sans-serif;
       text-align: center;
     }
@@ -31,18 +33,37 @@
       border-radius: 22px;
     }
 
-    h1 { font-size: 28px; margin: 0 0 8px; }
-    h2 { font-size: 20px; margin: 0 0 24px; }
-    p { line-height: 1.8; }
+    h1 {
+      font-size: 28px;
+      margin: 0 0 8px;
+    }
+
+    h2 {
+      font-size: 20px;
+      margin: 0 0 24px;
+    }
+
+    p {
+      line-height: 1.8;
+    }
 
     .status {
       font-size: 18px;
       font-weight: 700;
     }
 
-    .success { color: #7df0b5; }
-    .error { color: #ffaaa9; }
-    .muted { color: #c7d4ea; font-size: 14px; }
+    .success {
+      color: #7df0b5;
+    }
+
+    .error {
+      color: #ffaaa9;
+    }
+
+    .muted {
+      color: #c7d4ea;
+      font-size: 14px;
+    }
 
     button {
       border: 0;
@@ -58,7 +79,7 @@
     }
 
     button:disabled {
-      opacity: .5;
+      opacity: 0.5;
       cursor: not-allowed;
     }
 
@@ -68,11 +89,13 @@
       border-radius: 10px;
       border: 1px solid #8193b2;
       background: #10182b;
-      color: #fff;
+      color: #ffffff;
       font-size: 16px;
     }
 
-    .hidden { display: none; }
+    .hidden {
+      display: none;
+    }
 
     .timebox {
       margin-top: 16px;
@@ -80,6 +103,11 @@
       border: 1px solid #617696;
       border-radius: 12px;
       background: #17243c;
+    }
+
+    .game-name {
+      font-size: 20px;
+      font-weight: bold;
     }
   </style>
 </head>
@@ -89,11 +117,15 @@
     <h1>ONEGAME浜松</h1>
     <h2>QRゲーム認証</h2>
 
-    <p id="status" class="status">認証の準備をしています...</p>
+    <p id="status" class="status">
+      認証の準備をしています...
+    </p>
+
     <p id="detail" class="muted"></p>
 
     <div id="manual" class="hidden">
       <p>QRコードに記載された専用コードを入力してください。</p>
+
       <input
         id="tokenInput"
         type="text"
@@ -102,22 +134,26 @@
         autocomplete="off"
         spellcheck="false"
       >
-      <button id="checkButton" type="button">認証する</button>
+
+      <button id="checkButton" type="button">
+        認証する
+      </button>
     </div>
 
     <div id="approved" class="hidden">
-      <p id="gameName"></p>
+      <p id="gameName" class="game-name"></p>
 
-      <div id="timeBox" class="timebox hidden">
+      <div class="timebox">
         <p id="timeText"></p>
+        <p id="remainingText" class="success"></p>
       </div>
 
-      <button id="startButton" type="button">
-        ゲーム開始
+      <button id="openButton" type="button">
+        ゲームを開く
       </button>
 
       <p class="muted">
-        初回開始から60分間、何度でもプレイできます。
+        初回認証から60分間、何度でもゲームを開けます。
       </p>
     </div>
   </main>
@@ -128,9 +164,6 @@
     const CHECK_URL =
       "https://oranxqywopnabesvwmys.supabase.co/functions/v1/check-game-ticket";
 
-    const START_URL =
-      "https://oranxqywopnabesvwmys.supabase.co/functions/v1/start-game-ticket";
-
     const gameNames = {
       "button-mashing-game": "ボタン連打ゲーム",
       "udon-catch": "うどんキャッチ",
@@ -140,23 +173,26 @@
       "reaction-game": "反射神経ゲーム"
     };
 
+    // 次の工程で各ゲームの公開URLを登録します。
     const gameUrls = {
-      // 本番ゲームのURLは次の工程で登録します
     };
 
     const statusEl = document.getElementById("status");
     const detailEl = document.getElementById("detail");
     const manualEl = document.getElementById("manual");
     const approvedEl = document.getElementById("approved");
+
     const tokenInput = document.getElementById("tokenInput");
     const checkButton = document.getElementById("checkButton");
-    const startButton = document.getElementById("startButton");
-    const gameNameEl = document.getElementById("gameName");
-    const timeBox = document.getElementById("timeBox");
-    const timeText = document.getElementById("timeText");
+    const openButton = document.getElementById("openButton");
 
-    let currentToken = "";
+    const gameNameEl = document.getElementById("gameName");
+    const timeText = document.getElementById("timeText");
+    const remainingText = document.getElementById("remainingText");
+
     let currentGameId = "";
+    let resumeUntil = null;
+    let countdownTimer = null;
 
     function showStatus(message, type = "", detail = "") {
       statusEl.textContent = message;
@@ -164,28 +200,87 @@
       detailEl.textContent = detail;
     }
 
-    async function callFunction(url, token) {
-      const response = await fetch(url, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({ token })
-      });
+    function stopCountdown() {
+      if (countdownTimer !== null) {
+        clearInterval(countdownTimer);
+        countdownTimer = null;
+      }
+    }
 
-      const result = await response.json();
-
-      if (!response.ok) {
-        throw new Error(
-          result.error || "通信エラーが発生しました。"
-        );
+    function updateRemainingTime() {
+      if (!resumeUntil) {
+        return;
       }
 
-      return result;
+      const milliseconds = resumeUntil.getTime() - Date.now();
+
+      if (milliseconds <= 0) {
+        stopCountdown();
+        resumeUntil = null;
+
+        approvedEl.classList.add("hidden");
+
+        showStatus(
+          "利用時間が終了しました",
+          "error",
+          "初回認証から60分が経過したため、このQRコードは利用できません。"
+        );
+
+        return;
+      }
+
+      const totalSeconds = Math.ceil(milliseconds / 1000);
+      const minutes = Math.floor(totalSeconds / 60);
+      const seconds = totalSeconds % 60;
+
+      remainingText.textContent =
+        "残り時間：" +
+        minutes +
+        "分" +
+        String(seconds).padStart(2, "0") +
+        "秒";
+    }
+
+    function startCountdown(until) {
+      stopCountdown();
+
+      resumeUntil = new Date(until);
+
+      if (Number.isNaN(resumeUntil.getTime())) {
+        showStatus(
+          "認証エラー",
+          "error",
+          "利用期限を取得できませんでした。"
+        );
+        approvedEl.classList.add("hidden");
+        return;
+      }
+
+      timeText.textContent =
+        "利用期限：" +
+        resumeUntil.toLocaleString("ja-JP", {
+          timeZone: "Asia/Tokyo",
+          year: "numeric",
+          month: "2-digit",
+          day: "2-digit",
+          hour: "2-digit",
+          minute: "2-digit",
+          second: "2-digit"
+        });
+
+      updateRemainingTime();
+
+      if (resumeUntil) {
+        countdownTimer = setInterval(updateRemainingTime, 1000);
+      }
     }
 
     async function verifyToken(token) {
       const normalized = token.trim().toLowerCase();
+
+      stopCountdown();
+      resumeUntil = null;
+      currentGameId = "";
 
       approvedEl.classList.add("hidden");
 
@@ -202,36 +297,56 @@
       showStatus("QRコードを確認しています...");
 
       try {
-        const result = await callFunction(
-          CHECK_URL,
-          normalized
-        );
+        const response = await fetch(CHECK_URL, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          cache: "no-store",
+          body: JSON.stringify({
+            token: normalized
+          })
+        });
 
-        if (!result.valid) {
+        const result = await response.json();
+
+        if (!response.ok) {
+          throw new Error(
+            result.error || "通信エラーが発生しました。"
+          );
+        }
+
+        if (!result.valid || !result.allowed) {
           showStatus(
             "認証できません",
             "error",
-            result.message || "このQRコードは使用できません。"
+            result.message || "このQRコードは利用できません。"
           );
           return;
         }
 
-        currentToken = normalized;
+        if (!result.game_id || !result.resume_until) {
+          throw new Error("認証結果が不完全です。");
+        }
+
         currentGameId = result.game_id;
 
-        const name = gameNames[currentGameId] ||
-          "登録済みゲーム";
+        const gameName =
+          gameNames[currentGameId] || "登録済みゲーム";
 
-        gameNameEl.textContent = "対象ゲーム：" + name;
+        gameNameEl.textContent =
+          "対象ゲーム：" + gameName;
+
+        manualEl.classList.add("hidden");
+        approvedEl.classList.remove("hidden");
 
         showStatus(
           "認証成功！",
           "success",
-          result.message || "ゲームを開始できます。"
+          result.message || "ゲームを開けます。"
         );
 
-        manualEl.classList.add("hidden");
-        approvedEl.classList.remove("hidden");
+        startCountdown(result.resume_until);
 
       } catch (error) {
         console.error("認証エラー:", error);
@@ -246,65 +361,29 @@
       }
     }
 
-    async function startGame() {
-      if (!currentToken) return;
-
-      startButton.disabled = true;
-      showStatus("ゲームを準備しています...");
-
-      try {
-        const result = await callFunction(
-          START_URL,
-          currentToken
-        );
-
-        if (!result.allowed) {
-          approvedEl.classList.add("hidden");
-
-          showStatus(
-            "ゲームを開始できません",
-            "error",
-            result.message || "利用期限が終了しました。"
-          );
-          return;
-        }
-
-        const until = new Date(result.resume_until);
-
-        timeBox.classList.remove("hidden");
-
-        timeText.textContent =
-          "利用期限：" +
-          until.toLocaleString("ja-JP", {
-            timeZone: "Asia/Tokyo"
-          });
-
-        showStatus(
-          "ゲーム開始OK！",
-          "success",
-          result.message || "ゲームを開始できます。"
-        );
-
-        const url = gameUrls[result.game_id];
-
-        if (url) {
-          window.location.href = url;
-        } else {
-          detailEl.textContent =
-            "認証成功。ゲームURLはまだ登録されていません。";
-        }
-
-      } catch (error) {
-        console.error("ゲーム開始エラー:", error);
-
-        showStatus(
-          "通信エラー",
-          "error",
-          "ゲーム開始処理に失敗しました。"
-        );
-      } finally {
-        startButton.disabled = false;
+    function openGame() {
+      if (!currentGameId || !resumeUntil) {
+        return;
       }
+
+      if (Date.now() >= resumeUntil.getTime()) {
+        updateRemainingTime();
+        return;
+      }
+
+      const url = gameUrls[currentGameId];
+
+      if (!url) {
+        showStatus(
+          "認証成功！",
+          "success",
+          "ゲームURLはまだ登録されていません。"
+        );
+        return;
+      }
+
+      // ゲームURLは次の工程で登録します。
+      window.location.href = url;
     }
 
     checkButton.addEventListener("click", () => {
@@ -317,7 +396,7 @@
       }
     });
 
-    startButton.addEventListener("click", startGame);
+    openButton.addEventListener("click", openGame);
 
     const params = new URLSearchParams(location.search);
     const urlToken = params.get("token");
@@ -331,6 +410,7 @@
         "",
         "専用コードを入力して認証を確認できます。"
       );
+
       manualEl.classList.remove("hidden");
     }
   </script>
