@@ -17,23 +17,24 @@ jobs:
     timeout-minutes: 5
 
     steps:
-      - name: Supabase データベース応答確認
+      - name: Supabase REST API 応答確認
         env:
           SUPABASE_URL: https://oranxqywopnabesvwmys.supabase.co
-          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          SUPABASE_PUBLISHABLE_KEY: ${{ secrets.SUPABASE_PUBLISHABLE_KEY }}
         run: |
           python3 - <<'PY'
           import os
           import sys
-          import json
           import urllib.request
           import urllib.error
 
           base_url = os.environ["SUPABASE_URL"]
-          anon_key = os.environ.get("SUPABASE_ANON_KEY", "")
+          api_key = os.environ.get(
+              "SUPABASE_PUBLISHABLE_KEY", ""
+          )
 
-          if not anon_key:
-              print("ERROR: SUPABASE_ANON_KEY が未設定です")
+          if not api_key.startswith("sb_publishable_"):
+              print("ERROR: Publishable key が未設定です")
               sys.exit(1)
 
           url = base_url + "/rest/v1/"
@@ -41,8 +42,7 @@ jobs:
           request = urllib.request.Request(
               url,
               headers={
-                  "apikey": anon_key,
-                  "Authorization": "Bearer " + anon_key
+                  "apikey": api_key
               },
               method="GET"
           )
@@ -52,14 +52,11 @@ jobs:
                   request,
                   timeout=20
               ) as response:
-                  status = response.status
-                  print("Supabase HTTP Status:", status)
-
-                  if status == 200:
-                      print("Supabase API 正常応答")
-                  else:
-                      print("ERROR: 想定外の応答")
-                      sys.exit(1)
+                  print(
+                      "Supabase HTTP Status:",
+                      response.status
+                  )
+                  print("Supabase REST API 正常応答")
 
           except urllib.error.HTTPError as error:
               print("ERROR: HTTP", error.code)
