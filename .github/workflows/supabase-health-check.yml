@@ -3,8 +3,9 @@ name: Supabase 自動稼働確認
 
 on:
   schedule:
-    # 日本時間 09:00 / 13:00 / 18:00
-    - cron: "0 0,4,9 * * *"
+    # 日本時間 09:00 / 13:00 / 17:00
+    # UTC 00:00 / 04:00 / 08:00
+    - cron: "0 0,4,8 * * *"
   workflow_dispatch:
 
 permissions:
