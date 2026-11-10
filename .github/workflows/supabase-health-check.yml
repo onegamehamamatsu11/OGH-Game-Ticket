@@ -1,11 +1,12 @@
 
-name: Supabase 自動稼働確認
+name: Supabase データベース自動稼働確認
 
 on:
   schedule:
-    # 日本時間 09:00 / 13:00 / 17:00
-    # UTC 00:00 / 04:00 / 08:00
-    - cron: "0 0,4,8 * * *"
+    # 日本時間 00:07 / 03:07 / 06:07 / 09:07
+    #          12:07 / 15:07 / 18:07 / 21:07
+    - cron: "7 */3 * * *"
+
   workflow_dispatch:
 
 permissions:
@@ -13,14 +14,15 @@ permissions:
 
 jobs:
   health-check:
-    name: Supabase 稼働確認
+    name: Supabase DB稼働確認
     runs-on: ubuntu-latest
     timeout-minutes: 5
 
     steps:
-      - name: Supabase Edge Function 応答確認
+      - name: データベース接続確認
         env:
-          FUNCTION_URL: https://oranxqywopnabesvwmys.supabase.co/functions/v1/check-game-ticket
+          FUNCTION_URL: https://oranxqywopnabesvwmys.supabase.co/functions/v1/database-health-check
+          HEALTH_CHECK_SECRET: ${{ secrets.HEALTH_CHECK_SECRET }}
         run: |
           python3 - <<'PY'
           import json
@@ -30,18 +32,18 @@ jobs:
           import urllib.error
 
           url = os.environ["FUNCTION_URL"]
+          secret = os.environ["HEALTH_CHECK_SECRET"]
 
-          # 実在するQRコードを使わずに
-          # 認証関数の応答を確認する
-          payload = json.dumps({
-              "token": "health-check"
-          }).encode("utf-8")
+          if not secret:
+              print("ERROR: HEALTH_CHECK_SECRET is missing")
+              sys.exit(1)
 
           request = urllib.request.Request(
               url,
-              data=payload,
+              data=b"{}",
               headers={
-                  "Content-Type": "application/json"
+                  "Content-Type": "application/json",
+                  "x-health-check-secret": secret
               },
               method="POST"
           )
@@ -51,20 +53,17 @@ jobs:
                   request,
                   timeout=20
               ) as response:
-                  status = response.status
                   body = response.read().decode("utf-8")
-
-                  print("HTTP Status:", status)
-
                   result = json.loads(body)
 
-                  if isinstance(result, dict) and (
-                      "valid" in result or
-                      "allowed" in result
+                  if (
+                      response.status == 200
+                      and result.get("ok") is True
+                      and result.get("database") == "connected"
                   ):
-                      print("Edge Function 応答確認成功")
+                      print("SUCCESS: Supabase database connected")
                   else:
-                      print("ERROR: 想定外の応答形式")
+                      print("ERROR: Unexpected database response")
                       sys.exit(1)
 
           except urllib.error.HTTPError as error:
