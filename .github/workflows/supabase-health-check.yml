@@ -17,34 +17,32 @@ jobs:
     timeout-minutes: 5
 
     steps:
-      - name: Supabase REST API 応答確認
+      - name: Supabase Edge Function 応答確認
         env:
-          SUPABASE_URL: https://oranxqywopnabesvwmys.supabase.co
-          SUPABASE_PUBLISHABLE_KEY: ${{ secrets.SUPABASE_PUBLISHABLE_KEY }}
+          FUNCTION_URL: https://oranxqywopnabesvwmys.supabase.co/functions/v1/check-game-ticket
         run: |
           python3 - <<'PY'
+          import json
           import os
           import sys
           import urllib.request
           import urllib.error
 
-          base_url = os.environ["SUPABASE_URL"]
-          api_key = os.environ.get(
-              "SUPABASE_PUBLISHABLE_KEY", ""
-          )
+          url = os.environ["FUNCTION_URL"]
 
-          if not api_key.startswith("sb_publishable_"):
-              print("ERROR: Publishable key が未設定です")
-              sys.exit(1)
-
-          url = base_url + "/rest/v1/"
+          # 実在するQRコードを使わずに
+          # 認証関数の応答を確認する
+          payload = json.dumps({
+              "token": "health-check"
+          }).encode("utf-8")
 
           request = urllib.request.Request(
               url,
+              data=payload,
               headers={
-                  "apikey": api_key
+                  "Content-Type": "application/json"
               },
-              method="GET"
+              method="POST"
           )
 
           try:
@@ -52,11 +50,21 @@ jobs:
                   request,
                   timeout=20
               ) as response:
-                  print(
-                      "Supabase HTTP Status:",
-                      response.status
-                  )
-                  print("Supabase REST API 正常応答")
+                  status = response.status
+                  body = response.read().decode("utf-8")
+
+                  print("HTTP Status:", status)
+
+                  result = json.loads(body)
+
+                  if isinstance(result, dict) and (
+                      "valid" in result or
+                      "allowed" in result
+                  ):
+                      print("Edge Function 応答確認成功")
+                  else:
+                      print("ERROR: 想定外の応答形式")
+                      sys.exit(1)
 
           except urllib.error.HTTPError as error:
               print("ERROR: HTTP", error.code)
